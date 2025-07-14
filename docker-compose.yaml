@@ -1,0 +1,112 @@
+services:
+  catalogdb:
+    image: ankane/pgvector:latest
+    container_name: catalogdb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: catalogdb
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    command: ["postgres", "-c", "shared_buffers=512MB", "-c", "max_connections=200", "-c", "fsync=off"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d catalogdb"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eShopNetwork
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command:
+      - redis-server
+      - --save ""
+      - --appendonly no
+      - --maxmemory 256mb
+      - --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - eShopNetwork
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    volumes:
+      - rmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    environment:
+      RABBITMQ_MNESIA_BASE: /var/lib/rabbitmq/mnesia
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_VHOST: /
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+sbwt none +sbwtdcpu none +sbwtdio none +stbt db"
+      RABBITMQ_CTL_ERL_ARGS: "+P 1048576 +K true +A 128"
+      RABBITMQ_NODENAME: rabbit@rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eShopNetwork
+
+  basket-api:
+    image: basket-api
+    build:
+      context: .
+      dockerfile: src/Basket.API/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: "http://*:5221"
+      ConnectionStrings__Redis: redis
+      ConnectionStrings__EventBus: amqp://guest:guest@rabbitmq:5672
+      Identity__Url: "http://identity-api:5001"
+      DOTNET_READYTORUN: 1
+      DOTNET_TieredPGO: 1
+    ports:
+      - "5221:5221"
+    volumes:
+      - basket-data-protection:/app/keys
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c", "./wait-for-it.sh redis:6379 -- ./wait-for-it.sh rabbitmq:5672 -- dotnet Basket.API.dll"]
+    networks:
+      - eShopNetwork
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl --http2-prior-knowledge -sf http://localhost:5221/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  eShopNetwork:
+    driver: bridge
+
+volumes:
+  redis_data:
+  pg_data:
+  rmq_data:
+  basket-data-protection:
