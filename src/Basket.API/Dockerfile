@@ -34,7 +34,7 @@ WORKDIR /app
 COPY --from=build /app/publish ./
 
 # Copier le script d'attente
-COPY script/wait-for-it.sh /app/wait-for-it.sh
+COPY scripts/wait-for-it.sh /app/wait-for-it.sh
 
 # Donner les droits d’exécution + installer curl (nécessaire pour la healthcheck)
 RUN chmod +x /app/wait-for-it.sh && \

@@ -1,0 +1,82 @@
+stages:
+  - build
+  - login
+  - push
+
+variables:
+  DOCKER_ID: "ajkabs"
+  GIT_COMMIT_HASH: "${CI_COMMIT_SHA:0:7}"
+  DOCKER_TAG: "v.${CI_PIPELINE_ID}.0-${GIT_COMMIT_HASH}"  # Tag avec l'ID de pipeline et le hash du commit
+  REPO_URL: 'https://github.com/josuekabangu/EshopOnContainer.git'
+
+before_script:
+  - echo "Début du pipeline GitLab CI/CD"
+
+# Build Custom Docker Images
+build:
+  stage: build
+  script:
+    - |
+      SERVICES=(
+        "basket-api Basket.API"
+        "catalog-api Catalog.API"
+        "identity-api Identity.API"
+        "ordering-api Ordering.API"
+        "order-processor OrderProcessor"
+        "payment-processor PaymentProcessor"
+        "webhooks-api Webhooks.API"
+        "mobile-bff Mobile.Bff.Shopping"
+        "webapp WebApp"
+      )
+
+      for service in "${SERVICES[@]}"; do
+        SERVICE_NAME=$(echo $service | cut -d' ' -f1)
+        PATH=$(echo $service | cut -d' ' -f2)
+
+        echo "Validation du Dockerfile pour ${SERVICE_NAME}..."
+        test -f src/${PATH}/Dockerfile || { echo "Dockerfile non trouvé pour ${SERVICE_NAME}"; exit 1; }
+
+        echo "Build de l'image Docker pour ${SERVICE_NAME}..."
+        docker build --cache-from=${DOCKER_ID}/${SERVICE_NAME}:latest -t ${DOCKER_ID}/${SERVICE_NAME}:${DOCKER_TAG} -f src/${PATH}/Dockerfile .
+      done
+
+# Login to DockerHub
+login:
+  stage: login
+  script:
+    - echo "Connexion à DockerHub..."
+    - echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin || exit 1
+  only:
+    - main
+
+# Push Docker Images
+push:
+  stage: push
+  script:
+    - |
+      SERVICES=(
+        "basket-api"
+        "catalog-api"
+        "identity-api"
+        "ordering-api"
+        "order-processor"
+        "payment-processor"
+        "webhooks-api"
+        "mobile-bff"
+        "webapp"
+      )
+
+      for service in "${SERVICES[@]}"; do
+        echo "Push de ${service} vers DockerHub..."
+        docker push ${DOCKER_ID}/${service}:${DOCKER_TAG}
+      done
+
+# Post actions
+after_script:
+  - echo "Pipeline terminé."
+  - |
+    if [ "$CI_JOB_STATUS" == "success" ]; then
+      echo "Pipeline terminé avec succès. Images taguées : ${DOCKER_TAG}"
+    else
+      echo "Échec du pipeline. Vérifie les étapes précédentes."
+    fi
